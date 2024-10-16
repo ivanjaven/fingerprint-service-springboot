@@ -19,6 +19,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
   @Override
   public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-    registry.addHandler(fingerprintWebSocketHandler, "/fingerprint-ws").setAllowedOrigins("*");
+    registry.addHandler(fingerprintWebSocketHandler, "/fingerprint-ws")
+        .setAllowedOrigins("http://localhost:3000");
   }
 }

@@ -34,25 +34,18 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     logger.info("WebSocket connection established");
     reader = selection.getFirstAvailableReader();
     reader.Open(Reader.Priority.EXCLUSIVE);
-    startCapture(session);
   }
 
-  private void startCapture(WebSocketSession session) {
-    new Thread(() -> {
-      try {
-        while (session.isOpen()) {
-          captureAndSend(session);
-          Thread.sleep(1000); // Wait for 1 second before next capture
-        }
-      } catch (Exception e) {
-        logger.error("Error in capture loop", e);
-      }
-    }).start();
+  @Override
+  protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+    if ("capture".equals(message.getPayload())) {
+      captureAndSend(session);
+    }
   }
 
   private void captureAndSend(WebSocketSession session) throws IOException {
     try {
-      logger.info("Waiting for fingerprint...");
+      logger.info("Capturing fingerprint...");
       Reader.CaptureResult result = reader.Capture(Fid.Format.ANSI_381_2004, Reader.ImageProcessing.IMG_PROC_DEFAULT,
           reader.GetCapabilities().resolutions[0], -1);
 
@@ -67,8 +60,7 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
         byte[] imageBytes = baos.toByteArray();
         String base64Image = Base64.getEncoder().encodeToString(imageBytes);
 
-        String jsonResponse = String.format("{\"status\":\"success\",\"image\":\"data:image/png;base64,%s\"}",
-            base64Image);
+        String jsonResponse = String.format("{\"status\":\"success\",\"image\":\"%s\"}", base64Image);
         session.sendMessage(new TextMessage(jsonResponse));
         logger.info("Image sent to client. Size: {} bytes", imageBytes.length);
       } else {
@@ -79,6 +71,14 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     } catch (UareUException e) {
       logger.error("Error during capture", e);
       session.sendMessage(new TextMessage("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
+    }
+  }
+
+  @Override
+  public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status)
+      throws Exception {
+    if (reader != null) {
+      reader.Close();
     }
   }
 }
