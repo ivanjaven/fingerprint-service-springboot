@@ -59,6 +59,7 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
+  // Function to handle capturing and sending fingerprint in registration
   private void captureAndSend(WebSocketSession session) throws IOException {
     try {
       Reader.CaptureResult result = captureFingerprint();
@@ -87,6 +88,7 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
+  // Function to handle identifying user
   private void identifyAndSend(WebSocketSession session) throws IOException {
     try {
       Resident identifiedResident = identifyUser();
@@ -102,6 +104,7 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
+  // Main function use to capture fingerprint
   private Reader.CaptureResult captureFingerprint() throws UareUException {
     logger.info("Capturing fingerprint...");
     Reader.CaptureResult result = reader.Capture(Fid.Format.ANSI_381_2004,
@@ -126,6 +129,7 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     return Base64.getEncoder().encodeToString(baos.toByteArray());
   }
 
+  // Main function use to identify user in the database based on fingerprint
   private Resident identifyUser() throws UareUException {
     logger.info("Starting user identification process");
 
