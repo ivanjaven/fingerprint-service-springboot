@@ -29,4 +29,15 @@ public class DatabaseService {
       return resident;
     });
   }
+
+  public String getStaffFingerprintByAuthId(Integer authId) {
+    String sql = """
+            SELECT r.fingerprint_base64
+            FROM residents r
+            JOIN auth a ON r.resident_id = a.resident_id
+            WHERE a.auth_id = ?
+        """;
+
+    return jdbcTemplate.queryForObject(sql, String.class, authId);
+  }
 }

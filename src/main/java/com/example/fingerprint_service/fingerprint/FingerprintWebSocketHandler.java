@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 import javax.imageio.ImageIO;
 
@@ -23,6 +24,7 @@ import com.digitalpersona.uareu.UareUException;
 import com.digitalpersona.uareu.UareUGlobal;
 import com.example.fingerprint_service.model.Resident;
 import com.example.fingerprint_service.service.DatabaseService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Component
@@ -56,6 +58,19 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
       captureAndSend(session);
     } else if ("identify".equals(payload)) {
       identifyAndSend(session);
+    } else {
+      // Handle staff verification
+
+      try {
+        JsonNode jsonNode = objectMapper.readTree(payload);
+        if (jsonNode.has("verify") && jsonNode.has("auth_id")) {
+          Integer authId = jsonNode.get("auth_id").asInt();
+          verifyStaffFingerprint(session, authId);
+        }
+      } catch (Exception e) {
+        logger.error("Error processing verification message", e);
+        session.sendMessage(new TextMessage("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
+      }
     }
   }
 
@@ -173,6 +188,75 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     logger.info("No matching resident found");
     return null;
   }
+
+  private void verifyStaffFingerprint(WebSocketSession session, Integer authId) throws IOException {
+    try {
+        // Get stored fingerprint data from database
+        String storedFmdString = databaseService.getStaffFingerprintByAuthId(authId);
+        if (storedFmdString == null) {
+            String response = objectMapper.writeValueAsString(Map.of(
+                "status", "error",
+                "message", "No fingerprint found"
+            ));
+            session.sendMessage(new TextMessage(response));
+            return;
+        }
+
+        // Capture current fingerprint
+        Reader.CaptureResult captureResult = captureFingerprint();
+        if (captureResult == null || captureResult.image == null) {
+            String response = objectMapper.writeValueAsString(Map.of(
+                "status", "error",
+                "message", "Failed to capture fingerprint"
+            ));
+            session.sendMessage(new TextMessage(response));
+            return;
+        }
+
+        try {
+            Engine engine = UareUGlobal.GetEngine();
+            // Create FMD from captured fingerprint
+            Fmd capturedFmd = engine.CreateFmd(captureResult.image, Fmd.Format.ANSI_378_2004);
+            // Import stored FMD
+            Fmd storedFmd = UareUGlobal.GetImporter().ImportFmd(
+                Base64.getDecoder().decode(storedFmdString),
+                Fmd.Format.ANSI_378_2004,
+                Fmd.Format.ANSI_378_2004
+            );
+
+            int falsematch_rate = engine.Compare(capturedFmd, 0, storedFmd, 0);
+            int target_falsematch_rate = Engine.PROBABILITY_ONE / 100000;
+
+            boolean isMatch = falsematch_rate < target_falsematch_rate;
+
+            String message = isMatch ? "Fingerprint matched successfully" : "Fingerprint does not match";
+
+            // Send response
+            String response = objectMapper.writeValueAsString(Map.of(
+                "status", "success",
+                "verified", isMatch,
+                "message", message
+            ));
+            session.sendMessage(new TextMessage(response));
+
+        } catch (Exception e) {
+            logger.error("Error comparing fingerprints: ", e);
+            String response = objectMapper.writeValueAsString(Map.of(
+                "status", "error",
+                "message", "Error comparing fingerprints"
+            ));
+            session.sendMessage(new TextMessage(response));
+        }
+
+    } catch (UareUException e) {
+        logger.error("Error during verification: ", e);
+        String response = objectMapper.writeValueAsString(Map.of(
+            "status", "error",
+            "message", "Error during verification"
+        ));
+        session.sendMessage(new TextMessage(response));
+    }
+}
 
   private String generateSecureFmdData(Fmd fmd) {
     try {
