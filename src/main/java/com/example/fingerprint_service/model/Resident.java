@@ -5,15 +5,22 @@ public class Resident {
   private String fullName;
   private String fingerprintBase64;
   private String imageBase64;
+  private Long authId;
+  private String role;
+  private String username;
 
   public Resident() {
   }
 
-  public Resident(Long residentId, String fullName, String fingerprintBase64, String imageBase64) {
+  public Resident(Long residentId, String fullName, String fingerprintBase64, String imageBase64,
+      Long authId, String role, String username) {
     this.residentId = residentId;
     this.fullName = fullName;
     this.fingerprintBase64 = fingerprintBase64;
     this.imageBase64 = imageBase64;
+    this.authId = authId;
+    this.role = role;
+    this.username = username;
   }
 
   public Long getResidentId() {
@@ -46,5 +53,29 @@ public class Resident {
 
   public void setImageBase64(String imageBase64) {
     this.imageBase64 = imageBase64;
+  }
+
+  public Long getAuthId() {
+    return authId;
+  }
+
+  public void setAuthId(Long authId) {
+    this.authId = authId;
+  }
+
+  public String getRole() {
+    return role;
+  }
+
+  public void setRole(String role) {
+    this.role = role;
+  }
+
+  public String getUsername() {
+    return username;
+  }
+
+  public void setUsername(String username) {
+    this.username = username;
   }
 }

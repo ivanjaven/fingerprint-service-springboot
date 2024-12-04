@@ -23,6 +23,7 @@ import com.digitalpersona.uareu.Reader;
 import com.digitalpersona.uareu.UareUException;
 import com.digitalpersona.uareu.UareUGlobal;
 import com.example.fingerprint_service.model.Resident;
+import com.example.fingerprint_service.model.StaffAuth;
 import com.example.fingerprint_service.service.DatabaseService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -58,9 +59,9 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
       captureAndSend(session);
     } else if ("identify".equals(payload)) {
       identifyAndSend(session);
+    } else if ("identify_staff".equals(payload)) { // Add this case
+      identifyStaffAndSend(session);
     } else {
-      // Handle staff verification
-
       try {
         JsonNode jsonNode = objectMapper.readTree(payload);
         if (jsonNode.has("verify") && jsonNode.has("auth_id")) {
@@ -103,6 +104,47 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
+  private StaffAuth identifyStaff() throws UareUException {
+    logger.info("Starting staff identification process");
+
+    Reader.CaptureResult captureResult = captureFingerprint();
+    if (captureResult == null || captureResult.image == null) {
+      logger.error("Failed to capture fingerprint");
+      return null;
+    }
+
+    List<StaffAuth> staffList = databaseService.getAllStaffFingerprints();
+    logger.info("Fetched {} staff from the database", staffList.size());
+
+    Engine engine = UareUGlobal.GetEngine();
+    Fmd capturedFmd = engine.CreateFmd(captureResult.image, Fmd.Format.ANSI_378_2004);
+
+    for (StaffAuth staff : staffList) {
+      try {
+        Fmd storedFmd = createFmdFromStoredData(staff.getFingerprintBase64());
+        if (storedFmd == null) {
+          logger.warn("Invalid stored fingerprint data for staff: {}", staff.getAuthId());
+          continue;
+        }
+
+        int falsematch_rate = engine.Compare(capturedFmd, 0, storedFmd, 0);
+        int target_falsematch_rate = Engine.PROBABILITY_ONE / 100000;
+
+        if (falsematch_rate < target_falsematch_rate) {
+          logger.info("Staff match found! Auth ID: {}, Username: {}",
+              staff.getAuthId(), staff.getUsername());
+          return staff;
+        }
+      } catch (Exception e) {
+        logger.error("Error comparing fingerprints for staff {}: {}",
+            staff.getAuthId(), e.getMessage());
+      }
+    }
+
+    logger.info("No matching staff found");
+    return null;
+  }
+
   // Function to handle identifying user
   private void identifyAndSend(WebSocketSession session) throws IOException {
     try {
@@ -115,6 +157,29 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
       }
     } catch (UareUException e) {
       logger.error("Error during identification", e);
+      session.sendMessage(new TextMessage("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
+    }
+  }
+
+  private void identifyStaffAndSend(WebSocketSession session) throws IOException {
+    try {
+      StaffAuth identifiedStaff = identifyStaff();
+      if (identifiedStaff != null) {
+        // Need to send data in the same format as resident data
+        String jsonResponse = objectMapper.writeValueAsString(Map.of(
+            "status", "success",
+            "resident", Map.of( // Changed from "staff" to "resident" to match existing client code
+                "residentId", identifiedStaff.getResidentId(),
+                "username", identifiedStaff.getUsername(),
+                "role", identifiedStaff.getRole(),
+                "authId", identifiedStaff.getAuthId(),
+                "isStaff", true)));
+        session.sendMessage(new TextMessage(jsonResponse));
+      } else {
+        session.sendMessage(new TextMessage("{\"status\":\"not_found\",\"message\":\"No matching staff found\"}"));
+      }
+    } catch (UareUException e) {
+      logger.error("Error during staff identification", e);
       session.sendMessage(new TextMessage("{\"status\":\"error\",\"message\":\"" + e.getMessage() + "\"}"));
     }
   }
@@ -191,72 +256,66 @@ public class FingerprintWebSocketHandler extends TextWebSocketHandler {
 
   private void verifyStaffFingerprint(WebSocketSession session, Integer authId) throws IOException {
     try {
-        // Get stored fingerprint data from database
-        String storedFmdString = databaseService.getStaffFingerprintByAuthId(authId);
-        if (storedFmdString == null) {
-            String response = objectMapper.writeValueAsString(Map.of(
-                "status", "error",
-                "message", "No fingerprint found"
-            ));
-            session.sendMessage(new TextMessage(response));
-            return;
-        }
-
-        // Capture current fingerprint
-        Reader.CaptureResult captureResult = captureFingerprint();
-        if (captureResult == null || captureResult.image == null) {
-            String response = objectMapper.writeValueAsString(Map.of(
-                "status", "error",
-                "message", "Failed to capture fingerprint"
-            ));
-            session.sendMessage(new TextMessage(response));
-            return;
-        }
-
-        try {
-            Engine engine = UareUGlobal.GetEngine();
-            // Create FMD from captured fingerprint
-            Fmd capturedFmd = engine.CreateFmd(captureResult.image, Fmd.Format.ANSI_378_2004);
-            // Import stored FMD
-            Fmd storedFmd = UareUGlobal.GetImporter().ImportFmd(
-                Base64.getDecoder().decode(storedFmdString),
-                Fmd.Format.ANSI_378_2004,
-                Fmd.Format.ANSI_378_2004
-            );
-
-            int falsematch_rate = engine.Compare(capturedFmd, 0, storedFmd, 0);
-            int target_falsematch_rate = Engine.PROBABILITY_ONE / 100000;
-
-            boolean isMatch = falsematch_rate < target_falsematch_rate;
-
-            String message = isMatch ? "Fingerprint matched successfully" : "Fingerprint does not match";
-
-            // Send response
-            String response = objectMapper.writeValueAsString(Map.of(
-                "status", "success",
-                "verified", isMatch,
-                "message", message
-            ));
-            session.sendMessage(new TextMessage(response));
-
-        } catch (Exception e) {
-            logger.error("Error comparing fingerprints: ", e);
-            String response = objectMapper.writeValueAsString(Map.of(
-                "status", "error",
-                "message", "Error comparing fingerprints"
-            ));
-            session.sendMessage(new TextMessage(response));
-        }
-
-    } catch (UareUException e) {
-        logger.error("Error during verification: ", e);
+      // Get stored fingerprint data from database
+      String storedFmdString = databaseService.getStaffFingerprintByAuthId(authId);
+      if (storedFmdString == null) {
         String response = objectMapper.writeValueAsString(Map.of(
             "status", "error",
-            "message", "Error during verification"
-        ));
+            "message", "No fingerprint found"));
         session.sendMessage(new TextMessage(response));
+        return;
+      }
+
+      // Capture current fingerprint
+      Reader.CaptureResult captureResult = captureFingerprint();
+      if (captureResult == null || captureResult.image == null) {
+        String response = objectMapper.writeValueAsString(Map.of(
+            "status", "error",
+            "message", "Failed to capture fingerprint"));
+        session.sendMessage(new TextMessage(response));
+        return;
+      }
+
+      try {
+        Engine engine = UareUGlobal.GetEngine();
+        // Create FMD from captured fingerprint
+        Fmd capturedFmd = engine.CreateFmd(captureResult.image, Fmd.Format.ANSI_378_2004);
+        // Import stored FMD
+        Fmd storedFmd = UareUGlobal.GetImporter().ImportFmd(
+            Base64.getDecoder().decode(storedFmdString),
+            Fmd.Format.ANSI_378_2004,
+            Fmd.Format.ANSI_378_2004);
+
+        int falsematch_rate = engine.Compare(capturedFmd, 0, storedFmd, 0);
+        int target_falsematch_rate = Engine.PROBABILITY_ONE / 100000;
+
+        boolean isMatch = falsematch_rate < target_falsematch_rate;
+
+        String message = isMatch ? "Fingerprint matched successfully" : "Fingerprint does not match";
+
+        // Send response
+        String response = objectMapper.writeValueAsString(Map.of(
+            "status", "success",
+            "verified", isMatch,
+            "message", message));
+        session.sendMessage(new TextMessage(response));
+
+      } catch (Exception e) {
+        logger.error("Error comparing fingerprints: ", e);
+        String response = objectMapper.writeValueAsString(Map.of(
+            "status", "error",
+            "message", "Error comparing fingerprints"));
+        session.sendMessage(new TextMessage(response));
+      }
+
+    } catch (UareUException e) {
+      logger.error("Error during verification: ", e);
+      String response = objectMapper.writeValueAsString(Map.of(
+          "status", "error",
+          "message", "Error during verification"));
+      session.sendMessage(new TextMessage(response));
     }
-}
+  }
 
   private String generateSecureFmdData(Fmd fmd) {
     try {
